@@ -5,6 +5,8 @@ import {GLTFLoader} from 'https://cdn.jsdelivr.net/npm/three@0.118.1/examples/js
 import {OrbitControls} from 'https://cdn.jsdelivr.net/npm/three@0.118/examples/jsm/controls/OrbitControls.js';
 
 
+
+
 class BasicCharacterControllerProxy {
   constructor(animations) {
     this._animations = animations;
@@ -15,10 +17,145 @@ class BasicCharacterControllerProxy {
   }
 };
 
+class PlayerControllerProxy {
+  constructor(animations) {
+    this._animations = animations;
+  }
+
+  get animations() {
+    return this._animations;
+  }
+};
+
+class Health {
+  constructor(params) {
+    this._healthClassName = params.className;
+    this._healthPoint = 100;
+    if (params.fsm) {
+      this._fsm = params.fsm;
+    }
+  }
+  get healthBar() {
+    return document.querySelector(`.${this._healthClassName} .health`);
+  }
+
+  deduct(damage) {
+    this._healthPoint -= damage;
+    const barWidth = this._healthPoint < 0 ? 0 : this._healthPoint;
+    this.healthBar.setAttribute('style', `width: ${barWidth}%`);
+  }
+}
+
+class PlayerController {
+  constructor(params) {
+    const { scene } = params;
+    this._scene = scene;
+    this._opponent = undefined;
+    this._health = new Health({ className: 'player' });
+    this._dizzyLevel = 0;
+    this._animations = {
+      'slash': {
+        action: function() {
+          this._opponent._health.deduct(20);
+          this._opponent._stateMachine.SetState('react');
+          this.setEffect('slash');
+        }.bind(this)
+      },
+      'chop': {
+        action: function() {
+          this._opponent._health.deduct(10);
+          this._opponent._stateMachine.SetState('react');
+          this.setEffect('chop');
+        }.bind(this)
+      },
+      'upper_slash': {
+        action: function() {
+          this._opponent._health.deduct(5);
+          this._opponent._stateMachine.SetState('react');
+          this.setEffect('upper_slash');
+        }.bind(this)
+      },
+      'guard': {
+        action: function() {
+          this.playSound('block');
+        }.bind(this)
+      }
+    };
+    this._input = new PlayerControllerInput();
+    this._stateMachine = new PlayerFSM(new PlayerControllerProxy(this._animations));
+
+    this._stateMachine.SetState('idle');
+    this._swordEffects = [];    
+  }
+
+  attack({ type }) {
+    const TYPES = ['slash', 'chop', 'upper_slash'];
+    if (!TYPES.includes(type)) return;
+    if (this._input._keys[type]) {
+      this._stateMachine.SetState(type);
+      this._input.resetStates();
+    }
+  }
+
+  playSound(sound) {
+    const path = './resources/sound/';
+    const event = new CustomEvent('playSound', { detail: { sound: `${path}/${sound}.mp3`}});
+    console.log(`playSound dispatched for ${sound}.`)
+    window.dispatchEvent(event);
+  }
+
+  setEffect(effect) {
+    const img = document.createElement('img');
+    img.addEventListener('transitionend', () => {
+      img.remove();
+      this._swordEffects.shift();
+    })
+    this.playSound('slash');
+    img.setAttribute('src', `./resources/player/${effect}.png`);
+    document.body.appendChild(img);
+    
+    this._swordEffects.push([img, new Date().getTime() / 1000]);
+  }
+
+  addOpponent(opponent) {
+    this._opponent = opponent;
+  }
+
+  addBLE({ ble, charCharacteristic }) {
+    if (this._ble) return;
+    this._ble = ble;
+    this._input.addBLE({ ble, charCharacteristic });
+  }
+
+  Update(timeInSeconds) {
+    this._stateMachine.Update(timeInSeconds, this._input);
+
+    this._swordEffects.forEach(e => {
+      if (new Date().getTime() / 1000 - e[1] > 0.5) {
+        e[0].classList.add('fadeOut');
+      }
+    });
+    if (this._input._keys.slash) {
+      this.attack({ type: 'slash'});
+    }
+    if (this._input._keys.chop) {
+      this.attack({ type: 'chop'});
+    }
+    if (this._input._keys['upper_slash']) {
+      this.attack({ type: 'upper_slash'});
+    }
+
+    this._dizzyLevel = Math.abs(this._health._healthPoint - 100) * 0.05;
+  }
+}
 
 class BasicCharacterController {
   constructor(params) {
     this._Init(params);
+    this._opponent =  params.opponent;
+    this._punchTimeStamp = 0;
+    this._health = new Health({ className: 'freak', fsm: this._stateMachine });
+    this._didGuard = false;
   }
 
   _Init(params) {
@@ -37,8 +174,8 @@ class BasicCharacterController {
 
   _LoadModels() {
     const loader = new FBXLoader();
-    loader.setPath('./resources/zombie/');
-    loader.load('mremireh_o_desbiens.fbx', (fbx) => {
+    loader.setPath('./resources/paladin/');
+    loader.load('character.fbx', (fbx) => {
       fbx.scale.setScalar(0.1);
       fbx.traverse(c => {
         c.castShadow = true;
@@ -57,7 +194,6 @@ class BasicCharacterController {
       const _OnLoad = (animName, anim) => {
         const clip = anim.animations[0];
         const action = this._mixer.clipAction(clip);
-  
         this._animations[animName] = {
           clip: clip,
           action: action,
@@ -65,12 +201,17 @@ class BasicCharacterController {
       };
 
       const loader = new FBXLoader(this._manager);
-      loader.setPath('./resources/zombie/');
-      loader.load('walk.fbx', (a) => { _OnLoad('walk', a); });
-      loader.load('run.fbx', (a) => { _OnLoad('run', a); });
+      loader.setPath('./resources/paladin/');
       loader.load('idle.fbx', (a) => { _OnLoad('idle', a); });
-      loader.load('dance.fbx', (a) => { _OnLoad('dance', a); });
+      loader.load('punch.fbx', (a) => { _OnLoad('punch', a); });
+      loader.load('death.fbx', (a) => { _OnLoad('death', a); });
+      loader.load('victory.fbx', (a) => { _OnLoad('victory', a); });
+      loader.load('react.fbx', (a) => { _OnLoad('react', a); });
     });
+  }
+
+  roundTo1Decimal(num) {
+    return Math.round(num * 10) / 10;
   }
 
   Update(timeInSeconds) {
@@ -80,73 +221,83 @@ class BasicCharacterController {
 
     this._stateMachine.Update(timeInSeconds, this._input);
 
-    const velocity = this._velocity;
-    const frameDecceleration = new THREE.Vector3(
-        velocity.x * this._decceleration.x,
-        velocity.y * this._decceleration.y,
-        velocity.z * this._decceleration.z
-    );
-    frameDecceleration.multiplyScalar(timeInSeconds);
-    frameDecceleration.z = Math.sign(frameDecceleration.z) * Math.min(
-        Math.abs(frameDecceleration.z), Math.abs(velocity.z));
+    if (this._stateMachine._currentState.Name == 'punch') {
+      this._punchTimeStamp += timeInSeconds;
+      const currentTime = this.roundTo1Decimal(this._punchTimeStamp);
+      const totalTime = this.roundTo1Decimal(this._animations['punch'].clip.duration);
 
-    velocity.add(frameDecceleration);
+      if (!this._opponent._input._keys.guard) {
+        if (currentTime > totalTime * 0.5 && currentTime < totalTime * 0.55) {
+          if (!this._stateMachine._currentState.didHandle) {
+            this._stateMachine._currentState.didHandle = true;
+            this._opponent._health.deduct(20);
+          }
+        }
+      } else {
+        if (!this._didGuard && currentTime > totalTime * 0.3 && currentTime < totalTime * 0.35) {
+          this._opponent._stateMachine.SetState('guard');
+          this._didGuard = true;
+        }
+      };
+      
+      if (this._health._healthPoint <= 0) {
+        matchStarted = false;
+      }
 
-    const controlObject = this._target;
-    const _Q = new THREE.Quaternion();
-    const _A = new THREE.Vector3();
-    const _R = controlObject.quaternion.clone();
-
-    const acc = this._acceleration.clone();
-    if (this._input._keys.shift) {
-      acc.multiplyScalar(2.0);
+      if (this._opponent._health._healthPoint <= 0) {
+        matchStarted = false;
+      }
+      
+      if (currentTime === totalTime) {
+        this._punchTimeStamp = 0;
+      }
+    } else {
+      this._didGuard = false;
     }
-
-    if (this._stateMachine._currentState.Name == 'dance') {
-      acc.multiplyScalar(0.0);
-    }
-
-    if (this._input._keys.forward) {
-      velocity.z += acc.z * timeInSeconds;
-    }
-    if (this._input._keys.backward) {
-      velocity.z -= acc.z * timeInSeconds;
-    }
-    if (this._input._keys.left) {
-      _A.set(0, 1, 0);
-      _Q.setFromAxisAngle(_A, 4.0 * Math.PI * timeInSeconds * this._acceleration.y);
-      _R.multiply(_Q);
-    }
-    if (this._input._keys.right) {
-      _A.set(0, 1, 0);
-      _Q.setFromAxisAngle(_A, 4.0 * -Math.PI * timeInSeconds * this._acceleration.y);
-      _R.multiply(_Q);
-    }
-
-    controlObject.quaternion.copy(_R);
-
-    const oldPosition = new THREE.Vector3();
-    oldPosition.copy(controlObject.position);
-
-    const forward = new THREE.Vector3(0, 0, 1);
-    forward.applyQuaternion(controlObject.quaternion);
-    forward.normalize();
-
-    const sideways = new THREE.Vector3(1, 0, 0);
-    sideways.applyQuaternion(controlObject.quaternion);
-    sideways.normalize();
-
-    sideways.multiplyScalar(velocity.x * timeInSeconds);
-    forward.multiplyScalar(velocity.z * timeInSeconds);
-
-    controlObject.position.add(forward);
-    controlObject.position.add(sideways);
-
-    oldPosition.copy(controlObject.position);
-
+    
     if (this._mixer) {
       this._mixer.update(timeInSeconds);
     }
+  }
+};
+
+
+class PlayerControllerInput {
+  constructor() {
+    this.currentState;
+    this._Init();
+  }
+
+  _Init() {
+    this._keys = {
+      chop: false,
+      slash: false,
+      guard: false,
+      idle: false,
+      'upper_slash': false,
+    };
+    this._states = ['chop', 'slash', 'guard', 'upper_slash', 'idle'];
+  //document.addEventListener('keyup', (e) => this._onKeyUp(e), false);
+    console.log('[from controller]', charCharacteristic)
+  }
+
+  addBLE({ ble, charCharacteristic }) {
+    ble.startNotifications(charCharacteristic, debounce(this.handleNotifications.bind(this), 350));
+  }
+
+  resetStates() {
+    Object.keys(this._keys).forEach(key => {
+      this._keys[key] = false;
+    });
+  }
+
+  handleNotifications(data) {
+    const state = this._states[data] || 'idle';
+    
+    this.resetStates();
+    this._keys[state] = true;
+
+    console.log('handleNotifications', state, this.currentState, this._keys)
   }
 };
 
@@ -157,61 +308,11 @@ class BasicCharacterControllerInput {
 
   _Init() {
     this._keys = {
-      forward: false,
-      backward: false,
-      left: false,
-      right: false,
-      space: false,
-      shift: false,
+      punch: false,
+      vistory: false,
+      death: false,
+      react: false,
     };
-    document.addEventListener('keydown', (e) => this._onKeyDown(e), false);
-    document.addEventListener('keyup', (e) => this._onKeyUp(e), false);
-  }
-
-  _onKeyDown(event) {
-    switch (event.keyCode) {
-      case 87: // w
-        this._keys.forward = true;
-        break;
-      case 65: // a
-        this._keys.left = true;
-        break;
-      case 83: // s
-        this._keys.backward = true;
-        break;
-      case 68: // d
-        this._keys.right = true;
-        break;
-      case 32: // SPACE
-        this._keys.space = true;
-        break;
-      case 16: // SHIFT
-        this._keys.shift = true;
-        break;
-    }
-  }
-
-  _onKeyUp(event) {
-    switch(event.keyCode) {
-      case 87: // w
-        this._keys.forward = false;
-        break;
-      case 65: // a
-        this._keys.left = false;
-        break;
-      case 83: // s
-        this._keys.backward = false;
-        break;
-      case 68: // d
-        this._keys.right = false;
-        break;
-      case 32: // SPACE
-        this._keys.space = false;
-        break;
-      case 16: // SHIFT
-        this._keys.shift = false;
-        break;
-    }
   }
 };
 
@@ -259,9 +360,26 @@ class CharacterFSM extends FiniteStateMachine {
 
   _Init() {
     this._AddState('idle', IdleState);
-    this._AddState('walk', WalkState);
-    this._AddState('run', RunState);
-    this._AddState('dance', DanceState);
+    this._AddState('punch', PunchState);
+    this._AddState('death', DeathState);
+    this._AddState('victory', VictoryState);
+    this._AddState('react', ReactState);
+  }
+};
+
+class PlayerFSM extends FiniteStateMachine {
+  constructor(proxy) {
+    super();
+    this._proxy = proxy;
+    this._Init();
+  }
+
+  _Init() {
+    this._AddState('idle', PlayerIdleState);
+    this._AddState('slash', SlashState);
+    this._AddState('chop', ChopState);
+    this._AddState('upper_slash', UpperSlashState);
+    this._AddState('guard', GuardState);
   }
 };
 
@@ -269,6 +387,7 @@ class CharacterFSM extends FiniteStateMachine {
 class State {
   constructor(parent) {
     this._parent = parent;
+    console.log('[State]', this);
   }
 
   Enter() {}
@@ -276,22 +395,23 @@ class State {
   Update() {}
 };
 
-
-class DanceState extends State {
+class PunchState extends State {
   constructor(parent) {
     super(parent);
 
     this._FinishedCallback = () => {
       this._Finished();
     }
+
+    this.didHandle = false;
   }
 
   get Name() {
-    return 'dance';
+    return 'punch';
   }
 
   Enter(prevState) {
-    const curAction = this._parent._proxy._animations['dance'].action;
+    const curAction = this._parent._proxy._animations[this.Name].action;
     const mixer = curAction.getMixer();
     mixer.addEventListener('finished', this._FinishedCallback);
 
@@ -301,11 +421,13 @@ class DanceState extends State {
       curAction.reset();  
       curAction.setLoop(THREE.LoopOnce, 1);
       curAction.clampWhenFinished = true;
-      curAction.crossFadeFrom(prevAction, 0.2, true);
+      curAction.crossFadeFrom(prevAction, 0.5, true);
       curAction.play();
     } else {
       curAction.play();
     }
+
+    playSound('./resources/sound/slash.mp3')
   }
 
   _Finished() {
@@ -314,9 +436,9 @@ class DanceState extends State {
   }
 
   _Cleanup() {
-    const action = this._parent._proxy._animations['dance'].action;
+    const action = this._parent._proxy._animations[this.Name].action;
     
-    action.getMixer().removeEventListener('finished', this._CleanupCallback);
+    action.getMixer().removeEventListener('finished', this._FinishedCallback);
   }
 
   Exit() {
@@ -325,104 +447,103 @@ class DanceState extends State {
 
   Update(_) {
   }
-};
 
+}
 
-class WalkState extends State {
+class SlashState extends State {
   constructor(parent) {
     super(parent);
+    this.didHandle = false;
+  }
+  get Name() {
+    return 'slash';
   }
 
+  Update() {
+    this._update();
+  }
+
+  _update() {
+    if (this.didHandle) {
+      this._parent.SetState('idle');
+    } else {
+      this.didHandle = true;
+      this.Play();
+    }
+  }
+
+  Play() {
+    this._parent._proxy._animations[this.Name].action();
+  }
+}
+
+class ChopState extends SlashState {
   get Name() {
-    return 'walk';
+    return 'chop';
+  }
+}
+
+class UpperSlashState extends SlashState {
+  get Name() {
+    return 'upper_slash';
+  }
+}
+
+class GuardState extends State {
+  constructor(parent) {
+    super(parent)
+    this._oldTimeStamp = 0;
+  }
+  get Name() {
+    return 'guard';
   }
 
   Enter(prevState) {
-    const curAction = this._parent._proxy._animations['walk'].action;
-    if (prevState) {
-      const prevAction = this._parent._proxy._animations[prevState.Name].action;
-
-      curAction.enabled = true;
-
-      if (prevState.Name == 'run') {
-        const ratio = curAction.getClip().duration / prevAction.getClip().duration;
-        curAction.time = prevAction.time * ratio;
-      } else {
-        curAction.time = 0.0;
-        curAction.setEffectiveTimeScale(1.0);
-        curAction.setEffectiveWeight(1.0);
-      }
-
-      curAction.crossFadeFrom(prevAction, 0.5, true);
-      curAction.play();
-    } else {
-      curAction.play();
+    if (prevState.NAME == this.NAME) {
+      this._parent.SetState('idle');
     }
-  }
+    const action = this._parent._proxy._animations[this.Name].action;
 
-  Exit() {
-  }
-
-  Update(timeElapsed, input) {
-    if (input._keys.forward || input._keys.backward) {
-      if (input._keys.shift) {
-        this._parent.SetState('run');
-      }
-      return;
-    }
-
-    this._parent.SetState('idle');
+    action.call();
   }
 };
 
-
-class RunState extends State {
-  constructor(parent) {
-    super(parent);
-  }
-
+class DeathState extends PunchState {
   get Name() {
-    return 'run';
+    return 'death';
   }
 
+  _Finished() {
+    this._Cleanup();
+  }
+}
+
+class VictoryState extends DeathState {
+  get Name() {
+    return 'victory';
+  }
+}
+
+class ReactState extends PunchState {
+  get Name() {
+    return 'react';
+  }
   Enter(prevState) {
-    const curAction = this._parent._proxy._animations['run'].action;
+    const action = this._parent._proxy._animations['react'].action;
+    const mixer = action.getMixer();
+    mixer.addEventListener('finished', this._FinishedCallback);
+
     if (prevState) {
       const prevAction = this._parent._proxy._animations[prevState.Name].action;
 
-      curAction.enabled = true;
-
-      if (prevState.Name == 'walk') {
-        const ratio = curAction.getClip().duration / prevAction.getClip().duration;
-        curAction.time = prevAction.time * ratio;
-      } else {
-        curAction.time = 0.0;
-        curAction.setEffectiveTimeScale(1.0);
-        curAction.setEffectiveWeight(1.0);
-      }
-
-      curAction.crossFadeFrom(prevAction, 0.5, true);
-      curAction.play();
-    } else {
-      curAction.play();
+      action.reset();  
+      action.setLoop(THREE.LoopOnce, 1);
+      action.clampWhenFinished = true;
+      action.crossFadeFrom(prevAction, 0.2, true);
+      action.play();
     }
   }
-
-  Exit() {
-  }
-
-  Update(timeElapsed, input) {
-    if (input._keys.forward || input._keys.backward) {
-      if (!input._keys.shift) {
-        this._parent.SetState('walk');
-      }
-      return;
-    }
-
-    this._parent.SetState('idle');
-  }
-};
-
+}
 
 class IdleState extends State {
   constructor(parent) {
@@ -436,11 +557,13 @@ class IdleState extends State {
   Enter(prevState) {
     const idleAction = this._parent._proxy._animations['idle'].action;
     if (prevState) {
+      console.log('Crossing Fading Idle State')
       const prevAction = this._parent._proxy._animations[prevState.Name].action;
       idleAction.time = 0.0;
       idleAction.enabled = true;
       idleAction.setEffectiveTimeScale(1.0);
       idleAction.setEffectiveWeight(1.0);
+      console.log('[prevAction]', prevAction)
       idleAction.crossFadeFrom(prevAction, 0.5, true);
       idleAction.play();
     } else {
@@ -451,14 +574,36 @@ class IdleState extends State {
   Exit() {
   }
 
-  Update(_, input) {
-    if (input._keys.forward || input._keys.backward) {
-      this._parent.SetState('walk');
-    } else if (input._keys.space) {
-      this._parent.SetState('dance');
+  rollDice() {
+    return Math.ceil(Math.random()*6);
+  }
+
+  shouldAttack () {
+    if (!matchStarted) return;
+    let n =  [undefined, undefined, undefined].map((v) => {
+      if (!v) {
+        return this.rollDice();
+      }
+    }).join('');
+    return n === '222';
+  }
+
+  Update(_) {
+    if (this.shouldAttack()) {
+      this._parent.SetState('punch');
     }
   }
 };
+
+class PlayerIdleState extends IdleState {
+  constructor(parent) {
+    super(parent);
+  }
+
+  Enter() {};
+
+  Update() {};
+}
 
 
 class CharacterControllerDemo {
@@ -485,9 +630,9 @@ class CharacterControllerDemo {
     const fov = 60;
     const aspect = 1920 / 1080;
     const near = 1.0;
-    const far = 1000.0;
+    const far = 500.0;
     this._camera = new THREE.PerspectiveCamera(fov, aspect, near, far);
-    this._camera.position.set(25, 10, 25);
+    this._camera.position.set(0,15, 15);
 
     this._scene = new THREE.Scene();
 
@@ -513,7 +658,7 @@ class CharacterControllerDemo {
 
     const controls = new OrbitControls(
       this._camera, this._threejs.domElement);
-    controls.target.set(0, 10, 0);
+    controls.target.set(0, 15, 0);
     controls.update();
 
     const loader = new THREE.CubeTextureLoader();
@@ -540,7 +685,7 @@ class CharacterControllerDemo {
 
     this._mixers = [];
     this._previousRAF = null;
-
+    this._player = new PlayerController({ scene: this._scene });
     this._LoadAnimatedModel();
     this._RAF();
   }
@@ -549,8 +694,10 @@ class CharacterControllerDemo {
     const params = {
       camera: this._camera,
       scene: this._scene,
+      opponent: this._player,
     }
     this._controls = new BasicCharacterController(params);
+    this._player.addOpponent(this._controls);
   }
 
   _LoadAnimatedModelAndPlay(path, modelFile, animFile, offset) {
@@ -602,6 +749,10 @@ class CharacterControllerDemo {
       this._threejs.render(this._scene, this._camera);
       this._Step(t - this._previousRAF);
       this._previousRAF = t;
+      if (!this._ble && ble && charCharacteristic) {
+        this._ble = ble;
+        this._player.addBLE({ ble, charCharacteristic });
+      }
     });
   }
 
@@ -614,12 +765,48 @@ class CharacterControllerDemo {
     if (this._controls) {
       this._controls.Update(timeElapsedS);
     }
+    if (this._player) {
+      this._player.Update(timeElapsedS);
+
+      if (this._player._dizzyLevel) {
+        this._threejs.domElement.setAttribute('style', `filter: blur(${this._player._dizzyLevel}px) grayscale(${this._player._dizzyLevel / 0.05}%)`)
+      }
+    }
+
+    if (this._player && this._controls) {
+      if (this._controls._health._healthPoint <= 0) {
+        this._controls._stateMachine.SetState('death');
+      }
+
+      if (this._player._health._healthPoint <= 0) {
+        this._controls._stateMachine.SetState('victory');
+      }
+    }
   }
 }
 
+function debounce(callback, timeout = 250) {
+  let t;
+  return (...args) => {
+    clearTimeout(t);
+    t = setTimeout(() => { callback.apply(this, args) }, timeout);
+  }
+}
+
+function playSound(path) {
+  const audio = new Audio(path);
+  audio.play();
+}
 
 let _APP = null;
 
 window.addEventListener('DOMContentLoaded', () => {
   _APP = new CharacterControllerDemo();
 });
+
+window.addEventListener('playSound', (e) => {
+  console.log('playSound fired')
+  if (!e.detail.sound) return;
+  playSound(e.detail.sound);
+})
+

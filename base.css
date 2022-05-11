@@ -6,4 +6,75 @@ body {
   margin: 0;
   padding: 0;
   overscroll-behavior: none;
+  text-align: center;
 }
+
+canvas {
+  position: absolute;
+  z-index: -999;
+  top: 0;
+  left: 0;
+}
+
+
+.health-bar {
+  width: 95%;
+  height: 50px;
+  background-color: red;
+  margin: 30px;
+  display: flex;
+  flex-direction: row;
+  border-radius: 10px;
+}
+
+.health { width: 100%; height: 100%; background-color: yellow; position: relative; }
+
+.timer, .player, .freak { height: 100%; }
+
+.player, .freak { flex: 1;  }
+
+.player { display: flex; justify-content: flex-end; }
+
+.player .health { border-radius: 10px 0 0 10px; }
+
+.freak .health { border-radius: 0 10px 10px 0; }
+
+.profile-pic {
+  height: 70px;
+  position: absolute;
+  color: #fff;
+  z-index: 999;
+  top: 90px;
+  font-size: 2em;
+  font-family: 'Impact', 'Helvetica Neue', 'sans-serif';
+}
+
+.freak + .profile-pic {
+  right: 3.5%;
+}
+
+.timer { 
+  width: 70px;
+  height: 70px;
+  background: #000;
+  text-align: center;
+  color: #fff;
+  margin-top: -10px;
+  font-size: 4em;
+}
+
+.hidden { display: none; }
+
+.ble-btn { padding: 20px; }
+
+img {
+  width: 100%;
+  height: 100vh;
+  position: absolute;
+  left: 0;
+  top: 0;
+  transition: opacity 1s ease-out; 
+}
+
+img[src] { opacity: 1; }
+img.fadeOut { opacity: 0; }

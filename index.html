@@ -1,12 +1,27 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Three.JS Tutorial: Character Controller</title>
+  <title>Fighting with Your Arduino</title>
   <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
   <link rel="stylesheet" type="text/css" href="base.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.7.2/p5.js"></script>
+  <script src="https://unpkg.com/p5ble@0.0.4/dist/p5.ble.js" type="text/javascript"></script>
 </head>
 <body>
-  <script src="./main.js" type="module">
-  </script>
+  <div class="health-bar">
+    <div class="profile-pic">Player 1</div>
+    <div class="player">
+      <div class="health"></div>
+    </div>
+    <div class="timer">&#x221e;</div>
+    <div class="freak">
+      <div class="health"></div>
+    </div>
+    <div class="profile-pic">Paladin</div>
+  </div>
+  <button class="ble-btn">Connect BLE</button>
+  
+  <script src="./sketch.js" type="text/javascript"></script>
+  <script src="./main.js" type="module"></script>
 </body>
 </html>
